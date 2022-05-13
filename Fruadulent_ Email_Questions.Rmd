@@ -1,0 +1,371 @@
+---
+title: "Identify Fraud from Enron Email"
+author: "Randy Tilson"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+> **Goal of project and information about the data in use**
+
+As with most machine learning projects, the goal of this project was to use a data set full of privileged information, and build a model that can predict fraud within any organization.  The dataset is unique in that inter-organizational information such as this is usually confidential.  However, due to the nature of the Enron scandal and collapse, this information became public.  The combination of email and financial records provides a unique method in which individual communications and finances can be combined to form a model that is not solely dependent on following the money from within a scandal.  This dataset has within it a field named 'poi'.  From within this there are 18 persons identified as a person of interest out of a total of 144 individuals.  This equates to roughly 12% of the population being labeled as such.  
+
+
+```{python echo=FALSE}
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from sklearn import metrics
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import GridSearchCV
+
+# Function/File imports
+from feature_format import featureFormat, targetFeatureSplit
+from tester import dump_classifier_and_data
+
+### Classifiers in use
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import ComplementNB
+from sklearn.ensemble import AdaBoostClassifier
+#from sklearn.naive_bayes import GaussianNB
+
+import warnings
+warnings.filterwarnings("ignore")
+
+```
+
+```{python echo=FALSE}
+
+def algo_choice_split(algo):
+    '''
+    Creates classifier object, then prints out metric reports
+    '''
+    clf = algo
+    clf.fit(features_train,labels_train)
+    predictions = clf.predict(features_test)
+    print("Algorithm: ", clf)
+    print("Precision", round(metrics.precision_score(labels_test,predictions),2))
+    print("Recall", round(metrics.recall_score(labels_test,predictions),2))
+    print("Accuracy", round(metrics.accuracy_score(labels_test,predictions),2))
+    print("")
+    #print(metrics.confusion_matrix(labels_test,predictions))
+    #print(metrics.classification_report(labels_test,predictions))
+    #print("")
+    
+```
+
+
+
+```{python echo=FALSE}
+data_dict = pd.read_pickle(r"C:\Users\randy\OneDrive\Desktop\Udacity\Identify Fraud from Enron Email\final_project_dataset.pkl") ## Read data file with pandas
+df = pd.DataFrame(data_dict).transpose() ## Convert to Dataframe and transpose for easier exploration
+```
+
+As shown below, the data was imported and then transposed to where the names of the persons from within the dataset became the index.  This was chosen for ease of data exploration.  Also, the dataframe statistics are shown prior to the removal of any unwanted features.  In this format, 21 columns containing 146 rows are ready for exploration.
+
+
+```{python echo=FALSE}
+print (df.info(show_counts=False))
+
+
+```
+
+```{python, echo=FALSE}
+df = df.drop(['email_address'],axis=1, errors ='ignore') ## Email address will not be used
+df = df.astype(float) ## Convert remaining data types
+#df_ = df.loc[:, df.columns != 'poi']
+print(df.isnull().sum(axis=1).sum(), "null values within dataframe")
+print("")
+print("Null values within each feature")
+print(df.isnull().sum(axis=0))
+
+#print(df.columns[(df < 0).any()])
+df['total_stock_value'] = abs(df['total_stock_value'])
+df['deferral_payments'] = abs(df['deferral_payments'])
+df['deferred_income'] = abs(df['deferred_income'])
+df['restricted_stock'] = abs(df['restricted_stock'])
+df['restricted_stock_deferred'] = abs(df['restricted_stock_deferred'])
+
+#df.to_messages.fillna(df.to_messages.mean(), inplace = True)
+#df.from_messages.fillna(df.from_messages.mean(), inplace = True)
+#df.from_this_person_to_poi.fillna(df.from_this_person_to_poi.mean(), inplace = True)
+#df.from_poi_to_this_person.fillna(df.from_poi_to_this_person.mean(), inplace = True)
+#df.shared_receipt_with_poi .fillna(df.shared_receipt_with_poi.mean(), inplace = True)
+
+```
+
+In addressing the null values from within the dataframe, the null values are widely seen across all features and the thought was given to replace null values with mean values of their given column.  However upon consideration and a lack of information, the values were removed within the feature_format function to avoid any possible data manipulation that may occur by replacing so many of these values with something such as a mean value.
+
+
+```{python echo=FALSE}
+
+df = df.drop(['email_address'],axis=1, errors ='ignore') ## Email address will not be used
+df = df.astype(float) ## Convert remaining data types
+df.fillna(0, inplace = True)
+```
+
+
+As with any dataset, a major outlier was discovered from within the financial information.  This outlier was found through plotting the salary data. 
+
+
+```{python echo=FALSE, fig.width = 6, fig.height =2}
+### Plot the salary data
+
+sns.set_style("darkgrid")
+p1 = sns.scatterplot(x="salary", y="bonus", data=df)
+plt.show(p1);
+```
+```{python, echo=FALSE}
+## See the highest salary to find the outlier shown above
+(df.sort_values(by = ['salary'],ascending=False).head(5))
+```
+
+The dataframe is then examined to find the outlier as seen above.  A row named TOTAL is identified.  This value will be harmful towards the training of a machine learning model dependent on independent features, so it is removed.
+
+```{python, echo=FALSE}
+## Drop the TOTAL column as it is unrelated to the rest of the salary data
+df.drop('TOTAL', axis=0, inplace = True, errors = 'ignore')
+## See the highest salary to find the outlier shown above
+(df.sort_values(by = ['salary'],ascending=False).head(5))
+
+(df.sort_values(by = ['salary'],ascending=True).head(5))
+```
+
+
+As seen above, the TOTAL values have been removed with the next values being that of Jeffrey Skilling, and Kenneth Lay who are both very important figures from within Enron.  Also, the lowest salary data was shown to explore the idea of removing data points without a salary.  However, it can be seen that other relevant information such as restricted stock information exists that may pertain towards model creation. 
+
+
+> **Feature Selection and Creation**
+
+
+In selecting the features to use within the POI identifier, I initially wanted to how the basic information of salary in combination with email communications would perform given the foundation of the project being that of finding fraud in Enron Emails.
+
+
+```{python, echo = FALSE}
+
+#features_list = ['poi', 'salary','bonus','other','total_stock_value','expenses','shared_receipt_with_poi']
+
+df.from_this_person_to_poi.fillna(0, inplace = True)
+df.from_messages.fillna(0, inplace = True)
+df.to_messages.fillna(0, inplace = True)
+df.from_poi_to_this_person.fillna(0, inplace = True)
+df.shared_receipt_with_poi.fillna(0, inplace = True)
+
+
+features_list = ['poi','salary','to_messages', 'from_poi_to_this_person', 'from_messages', 
+                 'from_this_person_to_poi', 'shared_receipt_with_poi']
+
+my_dataset = df.transpose()
+data = featureFormat(my_dataset, features_list, sort_keys = True)
+labels, features = targetFeatureSplit(data)
+
+cv = StratifiedShuffleSplit(n_splits=800,random_state = 42)
+for train_idx, test_idx in cv.split(features,labels):
+    features_train = []
+    features_test  = []
+    labels_train   = []
+    labels_test    = []
+    for ii in train_idx:
+        features_train.append( features[ii] )
+        labels_train.append( labels[ii] )
+    for jj in test_idx:
+        features_test.append( features[jj] )
+        labels_test.append( labels[jj] )
+
+
+my_dataset = df.transpose()
+
+
+print(features_list)
+print("")
+algo_choice_split(ComplementNB())
+algo_choice_split(LogisticRegression(max_iter = 500))
+algo_choice_split(AdaBoostClassifier(random_state=42))
+algo_choice_split(RandomForestClassifier(random_state=42))
+
+```
+
+The results as seen above, are not very good, obviously some key financial features are missing.  Following this, outside of 'salary' and 'total_stock_value',  I looked at the null values within the features and selected those features that were as complete as possible and also contained an element of discretionary spending. I believe that the financial features that remain from this are ones that can be easily exploited by an individual that is involved within a corruption scheme and also go unaccounted for from within sloppy and corrupt accounting procedures.  In addition, I believe them to be features that can be individually weighted from within a decision-tree like algorithm. 
+
+
+```{python, echo = FALSE}
+
+features_list = ['poi', 'salary','bonus','other','total_stock_value','expenses','to_messages', 'from_poi_to_this_person', 'from_messages', 'from_this_person_to_poi', 'shared_receipt_with_poi']
+
+my_dataset = df.transpose()
+data = featureFormat(my_dataset, features_list, sort_keys = True)
+labels, features = targetFeatureSplit(data)
+
+
+
+cv = StratifiedShuffleSplit(n_splits=800,random_state = 42)
+for train_idx, test_idx in cv.split(features,labels):
+    features_train = []
+    features_test  = []
+    labels_train   = []
+    labels_test    = []
+    for ii in train_idx:
+        features_train.append( features[ii] )
+        labels_train.append( labels[ii] )
+    for jj in test_idx:
+        features_test.append( features[jj] )
+        labels_test.append( labels[jj] )
+  
+        
+my_dataset = df.transpose()
+
+print(features_list)
+print("")
+algo_choice_split(ComplementNB())
+algo_choice_split(LogisticRegression(max_iter = 500))
+algo_choice_split(AdaBoostClassifier(random_state=42))
+algo_choice_split(RandomForestClassifier(random_state=42))
+
+```
+
+The results above are that from the newly added financial features.  They do show a marketable difference.  In creating a new feature I want to focus my attention to within the email/communications end of the dataset, as it seems as if there is now a heavier weighting of financial data.
+
+
+
+```{python, echo = FALSE}
+
+df['percent_to_poi'] = (df['from_this_person_to_poi']/df['to_messages']) * 100
+df['percent_from_poi'] = (df['from_poi_to_this_person']/df['from_messages']) * 100
+df['percent_shared_from_poi'] = (df['shared_receipt_with_poi']/(df['from_messages'] + df['to_messages'])) * 100
+df.percent_from_poi.fillna(0, inplace = True)
+df.percent_to_poi.fillna(0, inplace = True)
+df.percent_shared_from_poi.fillna(0, inplace = True)
+
+features_list = ['poi', 'salary','bonus','other','total_stock_value','expenses','percent_to_poi',
+'percent_shared_from_poi']
+
+
+
+my_dataset = df.transpose()
+data = featureFormat(my_dataset, features_list, sort_keys = True)
+labels, features = targetFeatureSplit(data)
+cv = StratifiedShuffleSplit(n_splits=800,random_state = 42)
+for train_idx, test_idx in cv.split(features,labels):
+    features_train = []
+    features_test  = []
+    labels_train   = []
+    labels_test    = []
+    for ii in train_idx:
+        features_train.append( features[ii] )
+        labels_train.append( labels[ii] )
+    for jj in test_idx:
+        features_test.append( features[jj] )
+        labels_test.append( labels[jj] )
+
+print(features_list)
+print("")
+algo_choice_split(ComplementNB())
+algo_choice_split(LogisticRegression(max_iter = 500))
+algo_choice_split(AdaBoostClassifier(random_state=42))
+algo_choice_split(RandomForestClassifier(random_state=42))
+
+```
+I created two new features that are calculated as the percent of a persons total emails sent to a poi, and the percent of a persons total email that shares a receipt with a poi.  Adding these new features improved the performance of the Random Forest Classifier and lessened that of Logistic Regression.  The Logistic Regression Classifier was not ever a top performer, so this seems like a sensible trade off and I will account for the new features as a gain in overall performance that can be tested from within the test.py script.  The results below are from final testing within the test.py script.  As shown, AdaBoost with the new features now meets the performance standards of .30 recall and precision, where without, it does not.  While still not meeting standards, Random Forest and ComplementNB also see slight improvements with the new features added.   
+
+
+### Final tuned testing without new features
+<pre>
+ComplementNB(alpha=0.001)
+	Accuracy: 0.50933	Precision: 0.08138	Recall: 0.26050	F1: 0.12402	F2: 0.18088
+
+AdaBoostClassifier(learning_rate=0.2, n_estimators=18, random_state=42)
+	Accuracy: 0.84967	Precision: 0.34803	Recall: 0.14600	F1: 0.20571	F2: 0.16518
+	
+RandomForestClassifier(n_estimators=50, random_state=42)
+	Accuracy: 0.85120	Precision: 0.30795	Recall: 0.09300	F1: 0.14286	F2: 0.10809
+</pre>
+
+### Final tuned testing with new features 
+<pre>
+ComplementNB(alpha=0.001)
+	Accuracy: 0.50913	Precision: 0.08147	Recall: 0.26100	F1: 0.12418	F2: 0.18116
+	
+AdaBoostClassifier(learning_rate=0.3, n_estimators=25, random_state=42)
+	Accuracy: 0.86680	Precision: 0.50075	Recall: 0.33400	F1: 0.40072	F2: 0.35783
+	
+RandomForestClassifier(n_estimators=50, random_state=42)
+	Accuracy: 0.86580	Precision: 0.49081	Recall: 0.17350	F1: 0.25637	F2: 0.19926
+</pre>	
+	
+
+Given this, the original email features are redundant and highly correlated, so they are replaced by the new features.  From this, 8 features remained for selection and these features were not scaled, as they were sufficient within their current form for the algorithms of choice.  To reiterate, these finalized features are shown once again below.
+
+
+
+```{python, echo = FALSE}
+print(features_list)
+
+```
+
+The data printed below shows the heavy weighting within these features towards persons identified as a poi.  With this, it can be seen why the selected features stand out within the classifier testing.
+
+
+
+```{python echo = FALSE}
+## Isolating the features by poi
+total_poi = len(df.loc[df['poi'] == 1, 'poi' ])
+total_non_poi = len(df.loc[df['poi'] == 0, 'poi' ])
+percent_poi = (total_poi/(total_poi+total_non_poi))*100
+
+poi_s_p = (df.loc[df['poi'] == 1, 'salary'].sum()/df.loc[df['poi'] == 0, 'salary'].sum())*100
+poi_b_p = (df.loc[df['poi'] == 1, 'bonus'].sum()/df.loc[df['poi'] == 0, 'bonus'].sum())*100
+poi_o_p = (df.loc[df['poi'] == 1, 'other'].sum()/df.loc[df['poi'] == 0, 'other'].sum())*100
+poi_st_p = (df.loc[df['poi'] == 1, 'total_stock_value'].sum()/df.loc[df['poi'] == 0, 'total_stock_value'].sum())*100
+poi_e_p = (df.loc[df['poi'] == 1, 'expenses'].sum()/df.loc[df['poi'] == 0, 'expenses'].sum())*100
+poi_sr_p = (df.loc[df['poi'] == 1, 'shared_receipt_with_poi'].sum()/df.loc[df['poi'] == 0, 'shared_receipt_with_poi'].sum())*100
+
+print("Total percent of population that is poi =", round (percent_poi,2))
+print("")
+print ("poi percent of salary = ", round( poi_s_p,2))
+print ("")
+print ("poi percent of bonus = ", round(poi_b_p,2))
+print ("")
+print ("poi percent of other = ", round(poi_o_p,2))
+print ("")
+print ("poi percent of total stock value = ", round(poi_st_p,2))
+print ("")
+print ("poi percent of expenses = ", round(poi_e_p,2))
+print ("")
+#print ("poi percent of shared emails = ", round(poi_sr_p,2))
+
+```
+
+
+
+> **Algorithm Selection**
+
+Four different classifiers were used while exploring the model creation from within this data.  Complement NB, Logistic Regression, AdaBoost, and Random Forest.  The performance varied greatly between these options when tested from within the more robust test.py script.  While testing, I noticed that Random Forest seemed to learn the data too well, and did not perform as well within the cross-validated testing approach.  Also, the Complement NB classifier does not to have very many tuning options.  Given this, I found the tuning options of AdaBoost to be best suited given my feature selection.      
+
+> **Parameter Tuning**
+
+Tuning of the chosen algorithm was performed in an effort to select the best parameters to work from within the chosen features.  Thus in creating a model for this dataset, the goal of tuning is to allow for model optimization without over fitting from within the available data.  As mentioned, if tuned poorly, a model be over-fit and perform excellent from within the training and test data, but fail when introduced to new unfamiliar data.  Thus a balance must be achieved between current and future performance. 
+
+Once the decision was made to use AdaBoost, I familiarized myself with the available parameter options.  I found that AdaBoost can be best tuned from within the 'n_estimators', and  'learning_rate' parameters while maintaining a random_state of 42.  Following this, I created a parameter grid inclusive of these parameters to be input into GridSearchCV and allowed the package to explore all of the possible combinations from within this parameter grid as they relate to the chosen features.  This optimized the features without an exhaustive manual iterative approach towards finding the best combinations.
+
+> **Validation**
+
+Validation of a model is very important within machine learning.  This can be accomplished through cross validation.  With cross validation, the data set is segmented into 'k' folds.  This allows for multiple unique data segments and helps to avoid model over-fitting.  While doing this, it is important to shuffle the validation folds to avoid the classic mistake of segmenting the data within similar features to where the test and train data sets become disjointed from each other, thus defeating the purpose of cross-validation.  It should also be noted that a lack of validation can lead to an over-fitted inaccurate model.
+
+Cross validation was achieved from within my analysis both through the use of StratifiedShuffleSplit for segmenting the dataset into 'train' and 'test' sets, and  the use of GridSearchCV.  With GridSearchCV, each classifier was tested for tuning with a 'cv' value of 5, which allowed for cross validation while tuning the model. 
+
+> **Evaluation Metrics**
+
+The two most important metrics that can be measured within my model performance are recall and precision.  These outweigh accuracy because of the skewed nature from within the dataset where there are only 18 data points identified as persons of interest.  First, recall being the measure of the models ability to appropriately identifying true positives.  Within the AdaBoost classifier, a recall of .34 was achieved, or more clearly stated around 34% of all persons of interest, who were in fact a person of interest,  were identified as such.  Next is precision, which is the ratio between true positives and all the positives.  The AdaBoost classifier has a precision rate of .50, so in essence, when the model predicts a person of interest, it is correct around 50 percent of the time.
+
+
+
+>
+
+
+
+
