@@ -1,5 +1,5 @@
 ---
-title: "Identify Fraud from Enron Email"
+title: "Identify Fraud from Email"
 author: "Randy Tilson"
 output:
   html_document:
