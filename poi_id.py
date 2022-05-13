@@ -305,7 +305,7 @@ clf=AdaBoostClassifier(learning_rate=0.3, n_estimators=25, random_state=42)
 # In[23]:
 
 
-### Task 6: Dump your classifier, dataset, and features_list so anyone can
+### Task 6: Dump classifier, dataset, and features_list
 
 pickle.dump((clf),open("my_classifier.pkl","wb"))
 pickle.dump((my_dataset),open("my_dataset.pkl","wb"))
